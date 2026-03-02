@@ -1,0 +1,16 @@
+plan
+.env
+ROADMAP.md
+app/rag/chroma/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated tailored resumes / cover letters
+outputs/
+
+# Persistent browser profile for Model B assisted apply
+.browser-profile/

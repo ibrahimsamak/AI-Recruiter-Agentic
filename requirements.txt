@@ -1,0 +1,16 @@
+deepagents
+langchain
+langgraph
+langchain-core
+langchain-mcp-adapters
+langchain-chroma
+chromadb
+langchain-openai
+langsmith
+mcp
+python-jobspy
+gradio
+playwright
+pypdf
+python-docx
+pydantic
