@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · configuration & LangSmith tracing
 # app/config.py
 """Central configuration + LangSmith tracing setup.
 
