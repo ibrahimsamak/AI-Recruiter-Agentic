@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · Pydantic schemas (profile, job, application)
 # app/state.py
 """Pydantic schemas shared across the platform."""
 from typing import Literal
