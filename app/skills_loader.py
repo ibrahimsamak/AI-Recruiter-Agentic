@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · SKILL.md loader
 # app/skills_loader.py
 from pathlib import Path
 
