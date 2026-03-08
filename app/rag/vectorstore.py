@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · ChromaDB job/profile matching
 # app/rag/vectorstore.py
 """ChromaDB-backed semantic matching between candidate profiles and jobs."""
 from langchain_chroma import Chroma
