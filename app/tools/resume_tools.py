@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · local tools (extract_profile, check_grounding)
 # app/tools/resume_tools.py
 """Local LangChain tools for the orchestrator and tailoring worker."""
 from langchain_core.tools import tool
