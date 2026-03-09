@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · MCP client wiring
 # app/tools/mcp_client.py
 """Wire the MCP servers into LangChain-compatible tools."""
 import os
