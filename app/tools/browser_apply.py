@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · assisted apply (visible browser)
 # app/tools/browser_apply.py
 """Model B — open a job's apply page in a VISIBLE, logged-in browser.
 
