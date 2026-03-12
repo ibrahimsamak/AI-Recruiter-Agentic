@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · job-boards MCP (LinkedIn via JobSpy)
 # mcp_servers/job_boards_server.py
 """Job-board search exposed as an MCP server (FastMCP, HTTP transport).
 
