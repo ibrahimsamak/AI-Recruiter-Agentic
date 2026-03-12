@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · ATS MCP (Greenhouse/Lever/Workday)
 # mcp_servers/ats_server.py
 """ATS integrations (Greenhouse / Lever / Workday) exposed as an MCP server.
 
