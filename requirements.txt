@@ -1,0 +1,21 @@
+# Pinned to the LangChain 1.x line. The plan uses 1.x-only APIs
+# (langchain.agents.middleware.TodoListMiddleware, deepagents) and
+# langchain-mcp-adapters/langgraph pull langchain-core 1.x — mixing in the
+# 0.3.x siblings pins langchain-core<1.0 and breaks the resolver.
+deepagents>=0.7
+langchain>=1.0
+langgraph>=1.0
+langchain-core>=1.0
+langchain-text-splitters>=1.1.2
+langchain-mcp-adapters>=0.3
+langchain-chroma>=1.0
+chromadb
+langchain-openai>=1.0
+langsmith
+mcp
+python-jobspy
+gradio
+playwright
+pypdf
+python-docx
+pydantic
