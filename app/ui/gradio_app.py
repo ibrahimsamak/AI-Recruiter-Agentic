@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · Gradio chat UI (entrypoint)
 # app/ui/gradio_app.py
 """Gradio chat UI — streaming, document downloads, and Model B assisted apply.
 
