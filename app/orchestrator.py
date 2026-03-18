@@ -5,13 +5,16 @@ from app.config import DEFAULT_MODEL
 from app.skills_loader import load_skill
 from app.tools.resume_tools import check_grounding, extract_profile
 
+# the chat agent should never be able to submit anything
+BLOCKED_ORCHESTRATOR_TOOLS = {"submit_to_ats", "submit_application"}
+
 
 def build_orchestrator(mcp_tools: list, checkpointer=None):
     matching_skill = load_skill("matching")
     tailoring_skill = load_skill("tailoring")
     cover_skill = load_skill("cover-letter")
 
-    safe_tools = mcp_tools
+    safe_tools = [t for t in mcp_tools if t.name not in BLOCKED_ORCHESTRATOR_TOOLS]
 
     discovery = {
         "name": "discovery",
@@ -40,6 +43,7 @@ def build_orchestrator(mcp_tools: list, checkpointer=None):
             "Apply the MATCHING SKILL yourself, in-context (rank jobs, explain each score):\n"
             f"{matching_skill}\n"
             "Delegate discovery and per-job tailoring to subagents. "
-            "Do not submit anything without asking the user first."
+            "You have NO ability to submit applications, only prepare tailored "
+            "resumes and cover letters. Submission happens elsewhere, behind human approval."
         ),
     )
