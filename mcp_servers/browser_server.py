@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · browser MCP (Playwright submit)
 # mcp_servers/browser_server.py  — wraps a Playwright browser agent
 """Browser automation exposed as an MCP server (stdio transport).
 
