@@ -1,7 +1,7 @@
 # AI Recruiting Platform
 
 <p align="center">
-  <img src="img/architecture.svg" alt="AI-Recruiter-Agentic — architecture & end-to-end flow" width="840">
+  <img src="img/img1.png" alt="AI Recruiting Platform — discovered & ranked jobs" width="880">
 </p>
 
 An agentic job-application assistant. Upload your résumé and it will **discover** real
@@ -13,9 +13,6 @@ Built on **DeepAgents** (orchestration) · **LangGraph** (durable graphs) ·
 **LangChain** (models/tools) · **MCP** (external capabilities) · **ChromaDB** (matching) ·
 **LangSmith** (tracing/eval) · **Gradio** (chat UI) · **JobSpy** (LinkedIn) ·
 **Playwright** (browser apply).
-
-> Companion doc: **[ROADMAP.md](ROADMAP.md)** — a step-by-step guide to rebuild this
-> project from scratch, with the gotchas we hit and how to verify each step.
 
 ---
 
@@ -54,11 +51,12 @@ tools are physically removed), and applying is a deliberate, browser-based human
 ## Architecture
 
 ### How the layers map
+
 - **DeepAgents** — the orchestrator harness: planning (`write_todos`), a virtual
   filesystem that holds generated documents, and a lean set of **subagents** each in an
   isolated context.
 - **Subagents (2, by design)** — `discovery` (isolates bulky raw postings) and
-  `tailoring_worker` (spawned per job for tailoring + cover letter). Subagent *count* is
+  `tailoring_worker` (spawned per job for tailoring + cover letter). Subagent _count_ is
   driven by context-isolation/parallelism, not by role names.
 - **Skills** — portable procedural knowledge (`SKILL.md`): tailoring, matching,
   cover-letter, ats-formatting. The **matching** skill is applied by the orchestrator
@@ -67,11 +65,12 @@ tools are physically removed), and applying is a deliberate, browser-based human
   gate (built; reserved for future ATS auto-submit).
 - **MCP servers** — external capabilities as decoupled services: `job-boards` (LinkedIn
   search), `ats` (Greenhouse/Lever/Workday), `browser` (Playwright submit).
-- **ChromaDB** — vector store for semantic matching (built; see *Known limitations*).
+- **ChromaDB** — vector store for semantic matching (built; see _Known limitations_).
 - **LangSmith** — traces every run (enabled by importing `app.config`) and hosts the
   grounding eval.
 
 ### Directory layout
+
 ```
 JobsAgent/
 ├── app/
@@ -109,6 +108,7 @@ JobsAgent/
 ## Setup
 
 ### 1. Python env + dependencies
+
 Requires **Python 3.12**. This project runs on the **LangChain 1.x** line — do not let
 any `0.3.x` sibling (`langchain`, `langchain-openai`, …) sneak in, or the resolver
 breaks (see ROADMAP Step 0).
@@ -122,6 +122,7 @@ playwright install chromium          # headed Chromium for browser apply + brows
 ```
 
 Verify the stack is coherent:
+
 ```bash
 pip check     # no langchain/langgraph conflicts
 python -c "from deepagents import create_deep_agent; \
@@ -129,6 +130,7 @@ from langchain.agents.middleware import TodoListMiddleware; print('stack OK')"
 ```
 
 ### 2. Configuration — `.env`
+
 Create `.env` in the project root (it's gitignored):
 
 ```ini
@@ -152,14 +154,17 @@ EMBEDDING_MODEL=text-embedding-3-small
 ## Running locally
 
 ### One command (recommended)
+
 ```bash
 ./run_local.sh
 ```
+
 This loads `.env`, starts the two HTTP MCP servers (`:8001`, `:8002`), **waits** for both
 ports, launches the Gradio UI at **http://localhost:7860**, and stops the servers on
 `Ctrl+C`. The `browser` MCP server is stdio (auto-spawned) — no separate process.
 
 ### Manual (3 terminals)
+
 ```bash
 # Terminal 1
 python3 mcp_servers/job_boards_server.py     # → http://localhost:8001/mcp
@@ -169,10 +174,12 @@ python3 mcp_servers/ats_server.py            # → http://localhost:8002/mcp
 set -a; source .env; set +a
 python3 -m app.ui.gradio_app                 # → http://localhost:7860
 ```
+
 If the UI starts before the servers, campaigns fail with
 `httpx.ConnectError: All connection attempts failed` — start the servers first.
 
 ### Using the app
+
 1. Upload a résumé (**PDF / DOCX / TXT**), set a location, click **Start campaign**.
    Progress streams live; a ranked list appears and the **Approve a job** dropdown fills.
 2. Reply **"yes, proceed"** (or "focus on the top 3", "draft a cover letter for X").
@@ -180,11 +187,16 @@ If the UI starts before the servers, campaigns fail with
 3. Pick a job → **Approve & open apply page** → a real browser opens at the posting.
    First time, log into LinkedIn there (it's remembered); review and submit yourself.
 
+<p align="center">
+  <img src="img/img2.png" alt="Tailored cover letter generated in-app" width="880">
+</p>
+
 ---
 
 ## How the pieces work
 
 ### MCP servers
+
 - **`job-boards` (:8001)** — `search_jobs(query, location, limit=10)` scrapes LinkedIn via
   JobSpy, returns normalized postings with **descriptions truncated to ~800 chars** and
   **capped at 10** jobs (this keeps the agent under gpt-4o-mini's 200k tokens/min limit;
@@ -198,6 +210,7 @@ If the UI starts before the servers, campaigns fail with
   URLs defaulting to `localhost`; the stdio command uses `sys.executable` (not `"python"`).
 
 ### Orchestrator (hardened)
+
 `build_orchestrator(mcp_tools, checkpointer)` builds a DeepAgents agent that plans with
 todos, applies the matching skill in-context, and delegates to `discovery` +
 `tailoring_worker`. **Submit tools are stripped** (`BLOCKED_ORCHESTRATOR_TOOLS =
@@ -206,6 +219,7 @@ submission — the guardrail is structural, not just a prompt instruction. A che
 gives per-session chat memory (keyed by `thread_id`).
 
 ### UI (streaming + documents + approve)
+
 `app/ui/gradio_app.py` is an async, streaming chat. Handlers iterate
 `agent.astream(..., stream_mode="updates")` and `yield` live progress. After each turn it
 reads the agent's virtual filesystem (`state["files"]`), writes documents to
@@ -217,6 +231,7 @@ review and submit yourself — the agent never submits.
 ---
 
 ## Safety & guardrails
+
 - **No autonomous submission.** Orchestrator can't submit (tools removed); applying is a
   human browser action.
 - **Anti-fabrication.** The tailoring skill forbids inventing experience and calls
@@ -228,6 +243,7 @@ review and submit yourself — the agent never submits.
 ---
 
 ## Deployment
+
 See `deploy/`. `Dockerfile` builds the image (`python -m app.ui.gradio_app`, port 7860).
 `deploy/fargate.md` covers **ECS Fargate** (Gradio+orchestrator service + separate MCP
 services, ChromaDB on EFS, Postgres/DynamoDB checkpointer) and **Bedrock AgentCore**.
@@ -236,6 +252,7 @@ For real use, swap `InMemorySaver` for a durable checkpointer.
 ---
 
 ## Known limitations / open items
+
 - **ChromaDB isn't wired into matching yet.** `app/rag/vectorstore.py` works, but the
   orchestrator ranks in-context; the vector store only fills when called directly. Wiring
   retrieval→rubric is a planned improvement.
