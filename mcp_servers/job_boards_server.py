@@ -1,11 +1,30 @@
+import json
 import logging
 import math
+from pathlib import Path
 
 import pandas as pd
 from jobspy import scrape_jobs
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger("job-boards")
+
+# the ui reads this file to fill the approve dropdown
+JOBS_CACHE = Path(__file__).resolve().parents[1] / "outputs" / "_jobs_cache.json"
+
+
+def _cache_postings(postings: list[dict]) -> None:
+    try:
+        JOBS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        by_url = {}
+        if JOBS_CACHE.exists():
+            by_url = {j["url"]: j for j in json.loads(JOBS_CACHE.read_text()) if j.get("url")}
+        for j in postings:
+            if j.get("url"):
+                by_url[j["url"]] = j
+        JOBS_CACHE.write_text(json.dumps(list(by_url.values())))
+    except Exception as exc:
+        logger.warning("could not cache postings: %s", exc)
 
 mcp = FastMCP("job-boards", port=8001)
 
@@ -64,6 +83,7 @@ def search_jobs(query: str, location: str, limit: int = DEFAULT_LIMIT) -> list[d
                 "url": job_url,
             }
         )
+    _cache_postings(postings)
     return postings
 
 
