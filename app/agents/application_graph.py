@@ -1,3 +1,4 @@
+# AI-Recruiter-Agentic · LangGraph HITL approval graph
 # app/agents/application_graph.py
 """LangGraph subgraph: pause for human approval, then submit via the ATS.
 
