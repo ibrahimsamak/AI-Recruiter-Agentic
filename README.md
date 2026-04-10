@@ -1,5 +1,9 @@
 # AI Recruiting Platform
 
+<p align="center">
+  <img src="img/architecture.svg" alt="AI-Recruiter-Agentic — architecture & end-to-end flow" width="840">
+</p>
+
 An agentic job-application assistant. Upload your résumé and it will **discover** real
 LinkedIn jobs, **rank** them against your profile, **tailor** a résumé + cover letter for
 the ones you choose, and open the **apply page in a real browser** for you to submit —
@@ -8,7 +12,7 @@ with a human in control at every consequential step.
 Built on **DeepAgents** (orchestration) · **LangGraph** (durable graphs) ·
 **LangChain** (models/tools) · **MCP** (external capabilities) · **ChromaDB** (matching) ·
 **LangSmith** (tracing/eval) · **Gradio** (chat UI) · **JobSpy** (LinkedIn) ·
-**Playwright** (assisted apply).
+**Playwright** (browser apply).
 
 > Companion doc: **[ROADMAP.md](ROADMAP.md)** — a step-by-step guide to rebuild this
 > project from scratch, with the gotchas we hit and how to verify each step.
@@ -38,7 +42,7 @@ Upload résumé (PDF/DOCX/TXT)
         │
         │  pick a job in the "Approve a job" dropdown → [Approve & open apply page]
         ▼
-   Visible, logged-in Chromium opens the posting ──► YOU review & submit  (Model B)
+   Visible, logged-in Chromium opens the posting ──► YOU review & submit
 ```
 
 **Guiding principle:** the agent **prepares** materials; a **human performs** every
@@ -80,7 +84,7 @@ JobsAgent/
 │   ├── tools/
 │   │   ├── resume_tools.py    # extract_profile, check_grounding (@tool)
 │   │   ├── mcp_client.py      # MultiServerMCPClient wiring
-│   │   └── browser_apply.py   # Model B: visible logged-in browser
+│   │   └── browser_apply.py   # visible logged-in browser for applying
 │   ├── rag/
 │   │   └── vectorstore.py     # ChromaDB index/match (built, not yet wired in)
 │   └── ui/
@@ -93,7 +97,7 @@ JobsAgent/
 ├── evals/tailoring_eval.py    # LangSmith grounding eval
 ├── deploy/{Dockerfile, fargate.md}
 ├── outputs/                   # generated docs + _jobs_cache.json   (gitignored)
-├── .browser-profile/          # persistent browser login for Model B (gitignored)
+├── .browser-profile/          # persistent browser login for applying (gitignored)
 ├── run_local.sh               # start MCP servers + UI with one command
 ├── requirements.txt
 ├── README.md                  # this file
@@ -114,7 +118,7 @@ cd JobsAgent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
-playwright install chromium          # headed Chromium for Model B + browser MCP
+playwright install chromium          # headed Chromium for browser apply + browser MCP
 ```
 
 Verify the stack is coherent:
@@ -206,16 +210,9 @@ gives per-session chat memory (keyed by `thread_id`).
 `agent.astream(..., stream_mode="updates")` and `yield` live progress. After each turn it
 reads the agent's virtual filesystem (`state["files"]`), writes documents to
 `outputs/<thread_id>/`, and offers them as downloads. The **Approve a job** dropdown is
-filled from the jobs cache; **Approve & open apply page** spawns Model B as a detached
-subprocess.
-
-### Model B — assisted apply
-`app/tools/browser_apply.py` opens the job URL in a **visible** Chromium
-(`launch_persistent_context(".browser-profile", headless=False)`), best-effort pre-fills
-obvious fields, and keeps the window open until you close it. The persistent profile
-keeps you logged in across runs. It **never auto-submits** — you click submit. Fully
-automating LinkedIn's Easy Apply is intentionally not done (ToS + anti-bot + it needs
-your session).
+filled from the jobs cache; **Approve & open apply page** opens the posting in a visible,
+logged-in browser (`app/tools/browser_apply.py`) as a detached subprocess for you to
+review and submit yourself — the agent never submits.
 
 ---
 
@@ -245,21 +242,7 @@ For real use, swap `InMemorySaver` for a durable checkpointer.
 - **Tailoring quality.** `extract_profile` and `check_grounding` are stubs; tailored
   résumés can contain template placeholders (`[Your Name]`) instead of grounding in the
   uploaded résumé. Tightening the tailoring prompt + implementing `check_grounding` is next.
-- **Assisted, not automatic, apply.** Model B is human-in-the-loop by design. The
-  `application_graph` auto-submit path exists but isn't wired to the UI.
+- **Assisted, not automatic, apply.** The browser apply is human-in-the-loop by design.
+  The `application_graph` auto-submit path exists but isn't wired to the UI.
 - **Single-user local assumptions.** The jobs cache and browser profile are shared on
   disk; fine for local single-user, not multi-tenant.
-
----
-
-## Troubleshooting
-| Symptom | Cause / fix |
-|---|---|
-| `httpx.ConnectError: All connection attempts failed` | MCP servers not running — use `./run_local.sh` or start them first. |
-| Campaign runs for minutes with no output | Token volume → `429` retries. Ensure the `search_jobs` cap (limit 10 + truncation) is in place; watch for very long résumés. |
-| `TypeError: unexpected keyword argument 'instructions'` | `deepagents 0.7.x` renamed it to `system_prompt` (top-level and per-subagent). |
-| `AttributeError: 'list' object has no attribute 'expandtabs'` | LangChain 1.x message content is a list of blocks — flatten with `_content_to_text`. |
-| `gr.Chatbot ... unexpected keyword argument 'type'` | Gradio 6 removed `type="messages"`; drop it. |
-| Generated files link to dead `sandbox:/...` | Use the **📎 download panel** — files are materialized to `outputs/<thread>/`. |
-| `pip` dependency conflict on `langchain-core` | A `0.3.x` sibling crept in; reinstall on the 1.x line (ROADMAP Step 0). |
-| Model B browser doesn't appear | Needs a desktop session (won't show over headless SSH); confirm headed Chromium via `playwright install chromium`. |
