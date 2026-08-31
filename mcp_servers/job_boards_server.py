@@ -7,33 +7,38 @@ API, so this scrapes LinkedIn's public listings — it is ToS-gray and rate
 limited, so results may be partial and a block returns an empty list rather
 than crashing the campaign.
 """
-import json
 import logging
 import math
+import sys
 from pathlib import Path
 
 import pandas as pd
 from jobspy import scrape_jobs
 from mcp.server.fastmcp import FastMCP
 
+# This server is launched as `python mcp_servers/job_boards_server.py` (not
+# `-m`), so the repo root isn't on sys.path by default — add it so `app.*`
+# (a sibling package) is importable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.storage import JOBS_CACHE_KEY, load_json, save_json  # noqa: E402
+
 logger = logging.getLogger("job-boards")
 
-# The UI reads this to populate its "Approve a job" dropdown (subagent tool
-# results don't reach the parent stream, so we hand results off via disk). The
-# UI clears it at campaign start, so it holds only the current campaign's jobs.
-JOBS_CACHE = Path(__file__).resolve().parents[1] / "outputs" / "_jobs_cache.json"
+# The UI reads this (via app/storage.py) to populate its "Approve a job"
+# dropdown — subagent tool results don't reach the parent stream, so results
+# are handed off this way instead. This server and the UI run as SEPARATE ECS
+# services/containers in prod, so this goes through S3 (app/storage.py),
+# never a local path. The UI clears it at campaign start, so it holds only the
+# current campaign's jobs.
 
 
 def _cache_postings(postings: list[dict]) -> None:
     try:
-        JOBS_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        by_url = {}
-        if JOBS_CACHE.exists():
-            by_url = {j["url"]: j for j in json.loads(JOBS_CACHE.read_text()) if j.get("url")}
+        by_url = {j["url"]: j for j in (load_json(JOBS_CACHE_KEY, default=[]) or []) if j.get("url")}
         for j in postings:
             if j.get("url"):
                 by_url[j["url"]] = j
-        JOBS_CACHE.write_text(json.dumps(list(by_url.values())))
+        save_json(JOBS_CACHE_KEY, list(by_url.values()))
     except Exception as exc:
         logger.warning("could not cache postings: %s", exc)
 

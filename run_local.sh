@@ -44,6 +44,7 @@ if ! curl -s -o /dev/null http://localhost:8002/mcp; then
   echo; echo "ERROR: ats MCP did not start. Log:"; cat "$LOGDIR/ats.log"; exit 1
 fi
 
-# --- launch the UI in the foreground (Ctrl+C stops everything) ---
-echo "starting Gradio UI -> http://localhost:7860  (Ctrl+C to stop all)"
-exec "$PY" -m app.ui.gradio_app
+# --- launch FastAPI + mounted Gradio in the foreground (Ctrl+C stops everything) ---
+# Needs a reachable Postgres at $DATABASE_URL (e.g. `docker compose up -d postgres`).
+echo "starting app -> http://localhost:8000/ui  (Ctrl+C to stop all)"
+exec "$PY" -m uvicorn app.main:app --host 0.0.0.0 --port 8000

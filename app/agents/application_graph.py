@@ -9,7 +9,8 @@ only ever reached AFTER the human approval gate.
 """
 from typing import Optional, TypedDict
 
-from langgraph.checkpoint.memory import InMemorySaver  # -> Postgres/DynamoDB in prod
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -37,12 +38,20 @@ def review_node(state: AppState):
     return {"approved": decision == "approve"}
 
 
-def build_application_graph(mcp_tools: Optional[list] = None):
+def build_application_graph(
+    mcp_tools: Optional[list] = None,
+    checkpointer: Optional[BaseCheckpointSaver] = None,
+):
     """Compile the HITL application graph.
 
     Pass the MCP tools (from `load_mcp_tools`) to enable real ATS submission via
     the `submit_to_ats` tool. Without them, submit_node degrades to a no-op
     "applied" result so the graph stays runnable in isolation.
+
+    Pass a durable `checkpointer` (e.g. `await app.db.get_checkpointer()`) once
+    this graph is wired to the UI, so the human-approval interrupt survives a
+    task restart between "prepared" and "approved". Defaults to an in-memory
+    saver, which is fine for the isolated/test use this graph gets today.
     """
     submit_to_ats = None
     if mcp_tools:
@@ -72,7 +81,7 @@ def build_application_graph(mcp_tools: Optional[list] = None):
     g.add_edge(START, "review")
     g.add_edge("review", "submit")
     g.add_edge("submit", END)
-    return g.compile(checkpointer=InMemorySaver())
+    return g.compile(checkpointer=checkpointer or InMemorySaver())
 
 
 # Resume after human decides:

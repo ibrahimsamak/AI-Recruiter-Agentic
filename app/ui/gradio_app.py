@@ -1,49 +1,40 @@
 # Run locally: ./run_local.sh  ·  see README.md
-# AI-Recruiter-Agentic · Gradio chat UI (entrypoint)
+# AI-Recruiter-Agentic · Gradio chat UI (mounted into FastAPI, see app/main.py)
 # app/ui/gradio_app.py
-"""Gradio chat UI — streaming, document downloads, and Model B assisted apply.
+"""Gradio chat UI — streaming, document downloads, and (parked) assisted apply.
 
 Flow:
   1. Upload a resume → Start campaign → agent searches LinkedIn, ranks (streaming).
      The ranked jobs are captured into an "Approve a job" dropdown.
-  2. Chat "yes, proceed" → agent drafts tailored resumes + cover letters, which are
-     materialized to ./outputs/<thread_id>/ and offered as downloads.
-  3. Pick a job + "Approve & open apply page" → a VISIBLE, logged-in Chromium opens
-     at that job's page for you to review and submit manually (Model B). The agent
-     itself cannot submit (its submit tools are stripped); apply is a deliberate,
-     human-driven action outside the agent.
+  2. Chat "yes, proceed" → agent drafts tailored resumes + cover letters, persisted
+     via app/storage.py (S3 presigned URLs, or ./outputs/<thread_id>/ locally) and
+     linked in the chat.
+  3. Pick a job + "Approve & open apply page" → parked: returns the posting link for
+     you to open and apply yourself. The agent itself cannot submit (its submit tools
+     are stripped) regardless.
 """
 import asyncio
 import base64
-import json
-import subprocess
-import sys
 import uuid
 from pathlib import Path
 
 import gradio as gr
 from deepagents.backends.utils import file_data_to_string
-from langgraph.checkpoint.memory import InMemorySaver
 
+from app.db import get_checkpointer
 from app.orchestrator import build_orchestrator
+from app.storage import JOBS_CACHE_KEY, delete_json, load_json, save_document
 from app.tools.mcp_client import load_mcp_tools
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = PROJECT_ROOT / "outputs"
-JOBS_CACHE = OUTPUT_ROOT / "_jobs_cache.json"  # written by the job-boards MCP server
 
 
 def _read_jobs_cache() -> dict:
     """Return {label: url} for the current campaign's discovered jobs."""
-    try:
-        data = json.loads(JOBS_CACHE.read_text())
-        return {
-            f"{j.get('title', '?')} — {j.get('company', '?')}": j["url"]
-            for j in data
-            if j.get("url")
-        }
-    except Exception:
-        return {}
+    data = load_json(JOBS_CACHE_KEY, default=[]) or []
+    return {
+        f"{j.get('title', '?')} — {j.get('company', '?')}": j["url"]
+        for j in data
+        if j.get("url")
+    }
 
 
 def read_resume(file_path: str) -> str:
@@ -87,33 +78,33 @@ async def get_agent():
     async with _agent_lock:
         if _agent is None:
             mcp_tools = await load_mcp_tools()
-            _agent = build_orchestrator(mcp_tools, checkpointer=InMemorySaver())
+            checkpointer = await get_checkpointer()
+            _agent = build_orchestrator(mcp_tools, checkpointer=checkpointer)
     return _agent
 
 
-async def _collect_files(thread_id: str) -> list[str]:
-    """Materialize the agent's virtual files for this thread to real disk paths."""
+async def _collect_files(thread_id: str) -> list[tuple[str, str]]:
+    """Persist the agent's virtual files for this thread; return [(filename, url), ...]."""
     agent = await get_agent()
     snap = await agent.aget_state({"configurable": {"thread_id": thread_id}})
     files = (snap.values or {}).get("files") or {}
     if not files:
         return []
-    out_dir = OUTPUT_ROOT / thread_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    paths: list[str] = []
+    results: list[tuple[str, str]] = []
     for vpath, fdata in files.items():
-        real = out_dir / (Path(vpath).name or "file")
+        filename = Path(vpath).name or "file"
         try:
             encoding = fdata.get("encoding", "utf-8") if isinstance(fdata, dict) else "utf-8"
             if encoding == "base64":
-                real.write_bytes(base64.b64decode(fdata["content"]))
+                data = base64.b64decode(fdata["content"])
             else:
                 text = file_data_to_string(fdata) if isinstance(fdata, dict) else str(fdata)
-                real.write_text(text, encoding="utf-8")
-            paths.append(str(real))
+                data = text.encode("utf-8")
+            url = save_document(thread_id, filename, data)
+            results.append((filename, url))
         except Exception:
             continue
-    return sorted(paths)
+    return sorted(results)
 
 
 def _summarize(update: dict, steps: list) -> str:
@@ -154,28 +145,29 @@ async def _stream_reply(content: str, thread_id: str):
     yield final_text or ("\n".join(f"- {s}" for s in steps) or "_(no output)_")
 
 
-_DOWNLOAD_NOTE = "\n\n---\n**📎 Generated documents are ready — download them from the panel below.**"
+def _render_downloads(files: list[tuple[str, str]]) -> str:
+    if not files:
+        return ""
+    links = "\n".join(f"- [{name}]({url})" for name, url in files)
+    return f"\n\n---\n**📎 Generated documents:**\n\n{links}"
 
 
 async def start_campaign(resume_file, location):
     """Seed a new thread from the uploaded resume (streaming). Captures jobs."""
     if resume_file is None:
-        yield [], None, "", None, gr.update(), {}
+        yield [], None, "", "", gr.update(), {}
         return
     resume_text = read_resume(resume_file)
     thread_id = str(uuid.uuid4())
     # Scope the approve list to THIS campaign: clear the cache the MCP server fills.
-    try:
-        JOBS_CACHE.unlink()
-    except Exception:
-        pass
+    delete_json(JOBS_CACHE_KEY)
     seed = (
         f"Candidate resume:\n{resume_text}\n\n"
         f"Find, rank, and tailor for jobs in {location}. Do not submit anything."
     )
     base = [{"role": "user", "content": f"📄 Started a campaign for **{location}**."}]
 
-    yield base + [{"role": "assistant", "content": "⏳ **Working…** (searching LinkedIn — can take ~30s)"}], thread_id, "", [], gr.update(), {}
+    yield base + [{"role": "assistant", "content": "⏳ **Working…** (searching LinkedIn — can take ~30s)"}], thread_id, "", "", gr.update(), {}
     last = ""
     async for bubble in _stream_reply(seed, thread_id):
         last = bubble
@@ -185,8 +177,7 @@ async def start_campaign(resume_file, location):
     jobs = _read_jobs_cache()
     labels = list(jobs.keys())
     dd = gr.update(choices=labels, value=(labels[0] if labels else None))
-    note = _DOWNLOAD_NOTE if files else ""
-    yield base + [{"role": "assistant", "content": last + note}], thread_id, "", (files or []), dd, jobs
+    yield base + [{"role": "assistant", "content": last + _render_downloads(files)}], thread_id, "", _render_downloads(files), dd, jobs
 
 
 async def respond(message, history, thread_id):
@@ -210,75 +201,73 @@ async def respond(message, history, thread_id):
         yield base + [{"role": "assistant", "content": bubble}], "", gr.update()
 
     files = await _collect_files(thread_id)
-    note = _DOWNLOAD_NOTE if files else ""
-    yield base + [{"role": "assistant", "content": last + note}], "", (files or gr.update())
+    yield base + [{"role": "assistant", "content": last + _render_downloads(files)}], "", (_render_downloads(files) or gr.update())
 
 
 def approve_and_open(selected_label, job_map):
-    """Model B: open the approved job's page in a visible, logged-in browser."""
+    """Parked: server-side browser automation can't run in a headless ECS task
+    (no display, no persistent local profile across replicas/restarts). Until
+    that's redesigned (e.g. hand the candidate a link to open themselves), this
+    is a deliberate no-op."""
     job_map = job_map or {}
     if not selected_label or selected_label not in job_map:
         return "⚠️ Pick a job from the **Approve a job** list first (run a campaign to populate it)."
     url = job_map[selected_label]
-    # Detached subprocess so the browser window outlives this request.
-    subprocess.Popen(
-        [sys.executable, "-m", "app.tools.browser_apply", url],
-        cwd=str(PROJECT_ROOT),
-    )
     return (
-        f"🌐 Opening a **visible browser** at:\n\n{url}\n\n"
-        "Review the posting, click **Apply**, and submit it yourself. "
-        "First time only: log into LinkedIn in that window — the login is remembered."
+        "🚧 **Apply automation is parked for now.** Open this link yourself to apply:\n\n"
+        f"{url}"
     )
 
 
-with gr.Blocks(title="AI Recruiter") as demo:
-    gr.Markdown(
-        "## AI Recruiting Platform\n"
-        "Upload your resume and start a campaign, then chat with the agent — "
-        "reply **“yes, proceed”** to draft tailored resumes and cover letters. "
-        "To apply, pick a job below and **Approve & open apply page** — a real browser "
-        "opens for you to submit. _(The agent never submits; applying is your action.)_"
-    )
-
-    thread_id = gr.State(None)
-    job_map = gr.State({})
-
-    with gr.Row():
-        resume = gr.File(
-            label="Resume (PDF / DOCX / TXT)",
-            file_types=[".pdf", ".docx", ".txt"],
-            type="filepath",
-            scale=3,
+def build_ui() -> gr.Blocks:
+    with gr.Blocks(title="AI Recruiter") as demo:
+        gr.Markdown(
+            "## AI Recruiting Platform\n"
+            "Upload your resume and start a campaign, then chat with the agent — "
+            "reply **“yes, proceed”** to draft tailored resumes and cover letters. "
+            "_(Automated apply is currently parked — pick a job below for its link.)_"
         )
-        location = gr.Textbox(label="Target location", value="Toronto, ON", scale=2)
-        start_btn = gr.Button("Start campaign", variant="primary", scale=1)
 
-    chatbot = gr.Chatbot(label="Campaign", height=440)
-    generated = gr.Files(label="📎 Generated documents (download)", interactive=False)
+        thread_id = gr.State(None)
+        job_map = gr.State({})
 
-    with gr.Row():
-        msg = gr.Textbox(
-            label="Message",
-            placeholder="e.g. yes, proceed  ·  focus on the top 3  ·  draft a cover letter for the Bentley role",
-            scale=5,
+        with gr.Row():
+            resume = gr.File(
+                label="Resume (PDF / DOCX / TXT)",
+                file_types=[".pdf", ".docx", ".txt"],
+                type="filepath",
+                scale=3,
+            )
+            location = gr.Textbox(label="Target location", value="Toronto, ON", scale=2)
+            start_btn = gr.Button("Start campaign", variant="primary", scale=1)
+
+        chatbot = gr.Chatbot(label="Campaign", height=440)
+        generated = gr.Markdown(label="📎 Generated documents")
+
+        with gr.Row():
+            msg = gr.Textbox(
+                label="Message",
+                placeholder="e.g. yes, proceed  ·  focus on the top 3  ·  draft a cover letter for the Bentley role",
+                scale=5,
+            )
+            send_btn = gr.Button("Send", scale=1)
+
+        with gr.Row():
+            approve_dd = gr.Dropdown(label="Approve a job to apply", choices=[], scale=4)
+            approve_btn = gr.Button("Approve & open apply page", variant="secondary", scale=2)
+        approve_status = gr.Markdown()
+
+        start_btn.click(
+            fn=start_campaign,
+            inputs=[resume, location],
+            outputs=[chatbot, thread_id, msg, generated, approve_dd, job_map],
         )
-        send_btn = gr.Button("Send", scale=1)
+        send_btn.click(fn=respond, inputs=[msg, chatbot, thread_id], outputs=[chatbot, msg, generated])
+        msg.submit(fn=respond, inputs=[msg, chatbot, thread_id], outputs=[chatbot, msg, generated])
+        approve_btn.click(fn=approve_and_open, inputs=[approve_dd, job_map], outputs=[approve_status])
 
-    with gr.Row():
-        approve_dd = gr.Dropdown(label="Approve a job to apply", choices=[], scale=4)
-        approve_btn = gr.Button("Approve & open apply page", variant="secondary", scale=2)
-    approve_status = gr.Markdown()
-
-    start_btn.click(
-        fn=start_campaign,
-        inputs=[resume, location],
-        outputs=[chatbot, thread_id, msg, generated, approve_dd, job_map],
-    )
-    send_btn.click(fn=respond, inputs=[msg, chatbot, thread_id], outputs=[chatbot, msg, generated])
-    msg.submit(fn=respond, inputs=[msg, chatbot, thread_id], outputs=[chatbot, msg, generated])
-    approve_btn.click(fn=approve_and_open, inputs=[approve_dd, job_map], outputs=[approve_status])
+    return demo
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    build_ui().launch(server_name="0.0.0.0", server_port=7860)

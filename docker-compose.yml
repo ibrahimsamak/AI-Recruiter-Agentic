@@ -1,0 +1,16 @@
+# Local dev only: a Postgres instance with pgvector for DATABASE_URL.
+# Not used in AWS — there, DATABASE_URL points at RDS (see rag-agent-aws-plan.md).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_recruiter
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+volumes:
+  pg-data:

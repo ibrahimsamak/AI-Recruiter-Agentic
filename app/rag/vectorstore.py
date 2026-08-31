@@ -1,17 +1,33 @@
-# AI-Recruiter-Agentic · ChromaDB job/profile matching
+# AI-Recruiter-Agentic · pgvector (RDS) job/profile matching
 # app/rag/vectorstore.py
-"""ChromaDB-backed semantic matching between candidate profiles and jobs."""
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings  # swap for any embeddings provider
+"""Postgres/pgvector-backed semantic matching between candidate profiles and jobs.
 
-from app.config import CHROMA_DIR, EMBEDDING_MODEL
+Requires the `vector` extension on the target database — created once at app
+startup (see app/db.py:ensure_pgvector_extension), not by hand.
+"""
+from langchain_postgres import PGVector
+
+from app.config import AWS_REGION, EMBEDDING_MODEL, sqlalchemy_database_url
 
 
-def get_vectorstore(collection: str = "jobs") -> Chroma:
-    return Chroma(
+def get_embeddings():
+    """EMBEDDING_MODEL="bedrock:<model-id>" -> Bedrock (no OPENAI_API_KEY needed);
+    anything else -> OpenAI. Mirrors DEFAULT_MODEL's "provider:model" convention."""
+    if EMBEDDING_MODEL.startswith("bedrock:"):
+        from langchain_aws import BedrockEmbeddings
+
+        return BedrockEmbeddings(model_id=EMBEDDING_MODEL.split(":", 1)[1], region_name=AWS_REGION)
+    from langchain_openai import OpenAIEmbeddings
+
+    return OpenAIEmbeddings(model=EMBEDDING_MODEL)
+
+
+def get_vectorstore(collection: str = "jobs") -> PGVector:
+    return PGVector(
+        embeddings=get_embeddings(),
         collection_name=collection,
-        embedding_function=OpenAIEmbeddings(model=EMBEDDING_MODEL),
-        persist_directory=CHROMA_DIR,
+        connection=sqlalchemy_database_url(),
+        use_jsonb=True,
     )
 
 

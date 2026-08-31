@@ -5,14 +5,15 @@
 </p>
 
 An agentic job-application assistant. Upload your résumé and it will **discover** real
-LinkedIn jobs, **rank** them against your profile, **tailor** a résumé + cover letter for
-the ones you choose, and open the **apply page in a real browser** for you to submit —
-with a human in control at every consequential step.
+LinkedIn jobs, **rank** them against your profile, and **tailor** a résumé + cover letter
+for the ones you choose — with a human in control at every consequential step.
+(Automated apply — opening a real browser for you to submit — is currently **parked**;
+see *Known limitations*.)
 
-Built on **DeepAgents** (orchestration) · **LangGraph** (durable graphs) ·
-**LangChain** (models/tools) · **MCP** (external capabilities) · **ChromaDB** (matching) ·
-**LangSmith** (tracing/eval) · **Gradio** (chat UI) · **JobSpy** (LinkedIn) ·
-**Playwright** (browser apply).
+Built on **DeepAgents** (orchestration) · **LangGraph** (durable graphs, Postgres
+checkpointer) · **LangChain** (models/tools) · **MCP** (external capabilities) ·
+**FastAPI + Gradio** (mounted chat UI) · **Postgres/pgvector** (matching) · **S3**
+(generated documents) · **LangSmith** (tracing/eval) · **JobSpy** (LinkedIn).
 
 ---
 
@@ -25,7 +26,7 @@ Upload résumé (PDF/DOCX/TXT)
 [Start campaign] ──► DeepAgents orchestrator (plans with todos)
         │                 │
         │                 ├─► discovery subagent ──► search_jobs (MCP) ──► JobSpy ──► LinkedIn
-        │                 │                                   └─► writes outputs/_jobs_cache.json
+        │                 │                                   └─► writes the jobs cache (app/storage.py)
         │                 └─► matching skill (in-context) ──► ranks jobs 0–100 with reasons
         ▼
    Streaming chat shows live progress → ranked list
@@ -35,16 +36,16 @@ Upload résumé (PDF/DOCX/TXT)
    tailoring_worker subagent ──► tailored résumé + cover letter (grounded)
         │                              └─► written to DeepAgents virtual FS (state["files"])
         ▼
-   Documents materialized to outputs/<thread>/ ──► 📎 download panel
+   Documents uploaded to S3 (or ./outputs locally) ──► 📎 download links in chat
         │
         │  pick a job in the "Approve a job" dropdown → [Approve & open apply page]
         ▼
-   Visible, logged-in Chromium opens the posting ──► YOU review & submit
+   Parked: returns the posting link for YOU to open and apply yourself
 ```
 
 **Guiding principle:** the agent **prepares** materials; a **human performs** every
 outward action. The orchestrator has no ability to submit applications (its submit
-tools are physically removed), and applying is a deliberate, browser-based human step.
+tools are physically removed).
 
 ---
 
@@ -62,10 +63,15 @@ tools are physically removed), and applying is a deliberate, browser-based human
   cover-letter, ats-formatting. The **matching** skill is applied by the orchestrator
   in-context; the tailoring worker loads tailoring + cover-letter.
 - **LangGraph** — the durable `application_graph` with an `interrupt()` human-approval
-  gate (built; reserved for future ATS auto-submit).
+  gate (built; reserved for future ATS auto-submit). Chat threads persist via a
+  Postgres checkpointer (`app/db.py`) so they survive process restarts.
 - **MCP servers** — external capabilities as decoupled services: `job-boards` (LinkedIn
-  search), `ats` (Greenhouse/Lever/Workday), `browser` (Playwright submit).
-- **ChromaDB** — vector store for semantic matching (built; see _Known limitations_).
+  search), `ats` (Greenhouse/Lever/Workday), `browser` (Playwright submit, unreachable —
+  stripped from the orchestrator and not wired to the UI).
+- **Postgres/pgvector** — vector store for semantic matching (built; see _Known
+  limitations_), same RDS instance as the checkpointer.
+- **FastAPI** — mounts the Gradio UI at `/ui` and exposes a light `/api/health` for the
+  load balancer (`app/main.py`).
 - **LangSmith** — traces every run (enabled by importing `app.config`) and hosts the
   grounding eval.
 
@@ -74,8 +80,11 @@ tools are physically removed), and applying is a deliberate, browser-based human
 ```
 JobsAgent/
 ├── app/
-│   ├── config.py              # settings + LangSmith tracing (import = tracing on)
-│   ├── state.py               # Pydantic schemas
+│   ├── main.py                 # FastAPI entrypoint: /api/health + mounts Gradio at /ui
+│   ├── config.py                # settings + LangSmith tracing (import = tracing on)
+│   ├── db.py                    # Postgres checkpointer + pgvector extension bootstrap
+│   ├── storage.py                # generated-document storage (S3, local disk fallback)
+│   ├── state.py                # Pydantic schemas
 │   ├── skills_loader.py       # read SKILL.md into agent context
 │   ├── orchestrator.py        # DeepAgents orchestrator (skills + 2 subagents, hardened)
 │   ├── agents/
@@ -83,21 +92,21 @@ JobsAgent/
 │   ├── tools/
 │   │   ├── resume_tools.py    # extract_profile, check_grounding (@tool)
 │   │   ├── mcp_client.py      # MultiServerMCPClient wiring
-│   │   └── browser_apply.py   # visible logged-in browser for applying
+│   │   └── browser_apply.py   # visible logged-in browser for applying (parked, unused)
 │   ├── rag/
-│   │   └── vectorstore.py     # ChromaDB index/match (built, not yet wired in)
+│   │   └── vectorstore.py     # pgvector index/match (built, not yet wired into ranking)
 │   └── ui/
-│       └── gradio_app.py      # streaming chat UI + downloads + approve  ← entrypoint
+│       └── gradio_app.py      # streaming chat UI + downloads + approve; build_ui()
 ├── mcp_servers/
 │   ├── job_boards_server.py   # FastMCP :8001 — LinkedIn via JobSpy (+ jobs cache)
 │   ├── ats_server.py          # FastMCP :8002 — ATS read/submit tools
-│   └── browser_server.py      # FastMCP stdio — Playwright submit (approval-gated)
+│   └── browser_server.py      # FastMCP stdio — Playwright submit (unreachable, parked)
 ├── skills/{tailoring,matching,cover-letter,ats-formatting}/SKILL.md
 ├── evals/tailoring_eval.py    # LangSmith grounding eval
 ├── deploy/{Dockerfile, fargate.md}
-├── outputs/                   # generated docs + _jobs_cache.json   (gitignored)
-├── .browser-profile/          # persistent browser login for applying (gitignored)
-├── run_local.sh               # start MCP servers + UI with one command
+├── docker-compose.yml          # local Postgres+pgvector for DATABASE_URL
+├── outputs/                   # local-fallback docs + _jobs_cache.json   (gitignored)
+├── run_local.sh               # start MCP servers + the FastAPI/Gradio app
 ├── requirements.txt
 ├── README.md                  # this file
 └── ROADMAP.md                 # rebuild-from-scratch guide
@@ -118,7 +127,7 @@ cd JobsAgent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
-playwright install chromium          # headed Chromium for browser apply + browser MCP
+docker compose up -d postgres        # local Postgres+pgvector for DATABASE_URL
 ```
 
 Verify the stack is coherent:
@@ -137,13 +146,16 @@ Create `.env` in the project root (it's gitignored):
 # Required
 OPENAI_API_KEY=sk-...            # default model openai:gpt-4o-mini + embeddings
 LANGSMITH_API_KEY=lsv2_...       # tracing + the grounding eval
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_recruiter
 
 # Optional (defaults live in app/config.py)
 MODEL=openai:gpt-4o-mini
 LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=ai-recruiter
-# CHROMA_DIR unset → defaults to app/rag/chroma  (don't set ./.chroma)
 EMBEDDING_MODEL=text-embedding-3-small
+S3_BUCKET=                       # unset locally → documents land in ./outputs instead
+GRADIO_AUTH_USER=
+GRADIO_AUTH_PASS=
 ```
 
 `app/config.py` reads these with `os.getenv`; nothing auto-loads `.env`, so either
@@ -156,12 +168,14 @@ EMBEDDING_MODEL=text-embedding-3-small
 ### One command (recommended)
 
 ```bash
+docker compose up -d postgres        # first time only
 ./run_local.sh
 ```
 
 This loads `.env`, starts the two HTTP MCP servers (`:8001`, `:8002`), **waits** for both
-ports, launches the Gradio UI at **http://localhost:7860**, and stops the servers on
-`Ctrl+C`. The `browser` MCP server is stdio (auto-spawned) — no separate process.
+ports, launches FastAPI + the mounted Gradio UI at **http://localhost:8000/ui**
+(health check at `/api/health`), and stops the servers on `Ctrl+C`. The `browser` MCP
+server is stdio (auto-spawned) — no separate process.
 
 ### Manual (3 terminals)
 
@@ -172,7 +186,7 @@ python3 mcp_servers/job_boards_server.py     # → http://localhost:8001/mcp
 python3 mcp_servers/ats_server.py            # → http://localhost:8002/mcp
 # Terminal 3
 set -a; source .env; set +a
-python3 -m app.ui.gradio_app                 # → http://localhost:7860
+uvicorn app.main:app --host 0.0.0.0 --port 8000   # → http://localhost:8000/ui
 ```
 
 If the UI starts before the servers, campaigns fail with
@@ -183,9 +197,9 @@ If the UI starts before the servers, campaigns fail with
 1. Upload a résumé (**PDF / DOCX / TXT**), set a location, click **Start campaign**.
    Progress streams live; a ranked list appears and the **Approve a job** dropdown fills.
 2. Reply **"yes, proceed"** (or "focus on the top 3", "draft a cover letter for X").
-   Tailored résumés + cover letters appear in the **📎 Generated documents** panel.
-3. Pick a job → **Approve & open apply page** → a real browser opens at the posting.
-   First time, log into LinkedIn there (it's remembered); review and submit yourself.
+   Tailored résumés + cover letters appear as download links in the chat.
+3. Pick a job → **Approve & open apply page** → currently returns the posting link
+   (automated apply is parked; see *Known limitations*) — open it yourself to apply.
 
 <p align="center">
   <img src="img/img2.png" alt="Tailored cover letter generated in-app" width="880">
@@ -200,8 +214,10 @@ If the UI starts before the servers, campaigns fail with
 - **`job-boards` (:8001)** — `search_jobs(query, location, limit=10)` scrapes LinkedIn via
   JobSpy, returns normalized postings with **descriptions truncated to ~800 chars** and
   **capped at 10** jobs (this keeps the agent under gpt-4o-mini's 200k tokens/min limit;
-  without it, runs stall on `429` retries). Also writes results to `outputs/_jobs_cache.json`
-  for the UI's approve dropdown, since subagent tool results don't reach the parent stream.
+  without it, runs stall on `429` retries). Also writes results via `app/storage.py`
+  (`JOBS_CACHE_KEY`) for the UI's approve dropdown, since subagent tool results don't
+  reach the parent stream — this goes through S3 in prod because `job-boards` and the
+  UI run as separate ECS services with no shared disk.
 - **`ats` (:8002)** — `get_posting`, `list_application_fields` (safe reads) and
   `submit_to_ats` (write, approval-gated) for Greenhouse/Lever/Workday.
 - **`browser` (stdio)** — `submit_application(url, form)` drives Playwright; Playwright is
@@ -220,46 +236,54 @@ gives per-session chat memory (keyed by `thread_id`).
 
 ### UI (streaming + documents + approve)
 
-`app/ui/gradio_app.py` is an async, streaming chat. Handlers iterate
-`agent.astream(..., stream_mode="updates")` and `yield` live progress. After each turn it
-reads the agent's virtual filesystem (`state["files"]`), writes documents to
-`outputs/<thread_id>/`, and offers them as downloads. The **Approve a job** dropdown is
-filled from the jobs cache; **Approve & open apply page** opens the posting in a visible,
-logged-in browser (`app/tools/browser_apply.py`) as a detached subprocess for you to
-review and submit yourself — the agent never submits.
+`app/ui/gradio_app.py` exposes `build_ui()`, mounted into FastAPI by `app/main.py`
+(`gr.mount_gradio_app(app, demo, path="/ui")`) rather than launched standalone. Handlers
+iterate `agent.astream(..., stream_mode="updates")` and `yield` live progress. After each
+turn it reads the agent's virtual filesystem (`state["files"]`), persists documents via
+`app/storage.py` (S3 presigned URLs when `S3_BUCKET` is set, `./outputs/<thread_id>/`
+otherwise), and links them in the chat. The **Approve a job** dropdown is filled from the
+jobs cache; **Approve & open apply page** is parked — it returns the posting link instead
+of opening a browser (see *Known limitations*).
 
 ---
 
 ## Safety & guardrails
 
 - **No autonomous submission.** Orchestrator can't submit (tools removed); applying is a
-  human browser action.
+  human action (currently: opening the posting link yourself — see *Known limitations*).
 - **Anti-fabrication.** The tailoring skill forbids inventing experience and calls
   `check_grounding`; a LangSmith eval scores "no fabrication" (`evals/tailoring_eval.py`).
 - **LinkedIn ToS.** JobSpy scrapes public listings (gray-area, low-volume only); Easy
   Apply automation is deliberately avoided.
-- **Secrets.** `.env`, `outputs/`, and `.browser-profile/` are gitignored.
+- **Secrets.** `.env` and `outputs/` are gitignored.
 
 ---
 
 ## Deployment
 
-See `deploy/`. `Dockerfile` builds the image (`python -m app.ui.gradio_app`, port 7860).
-`deploy/fargate.md` covers **ECS Fargate** (Gradio+orchestrator service + separate MCP
-services, ChromaDB on EFS, Postgres/DynamoDB checkpointer) and **Bedrock AgentCore**.
-For real use, swap `InMemorySaver` for a durable checkpointer.
+See `rag-agent-aws-plan.md` for the FastAPI+Gradio ECS Fargate build (VPC, ALB, RDS,
+S3, IAM, step by step). `deploy/` has the app-specific parts on top of that plan:
+`Dockerfile` builds the image (`uvicorn app.main:app`, one worker, port 8000);
+`deploy/fargate.md` covers running `job-boards`/`ats` as separate ECS services, the
+known jobs-cache cross-container gap, and **Bedrock AgentCore** as an alternative path.
 
 ---
 
 ## Known limitations / open items
 
-- **ChromaDB isn't wired into matching yet.** `app/rag/vectorstore.py` works, but the
+- **pgvector isn't wired into matching yet.** `app/rag/vectorstore.py` works, but the
   orchestrator ranks in-context; the vector store only fills when called directly. Wiring
   retrieval→rubric is a planned improvement.
 - **Tailoring quality.** `extract_profile` and `check_grounding` are stubs; tailored
   résumés can contain template placeholders (`[Your Name]`) instead of grounding in the
   uploaded résumé. Tightening the tailoring prompt + implementing `check_grounding` is next.
-- **Assisted, not automatic, apply.** The browser apply is human-in-the-loop by design.
-  The `application_graph` auto-submit path exists but isn't wired to the UI.
-- **Single-user local assumptions.** The jobs cache and browser profile are shared on
-  disk; fine for local single-user, not multi-tenant.
+- **Apply automation is parked.** The old visible-Chromium apply flow
+  (`app/tools/browser_apply.py`) needed a display and a persistent local browser
+  profile — incompatible with a headless ECS task. `approve_and_open` now returns the
+  posting link instead. The `application_graph` auto-submit path exists but isn't wired
+  to the UI either.
+- **Single-campaign jobs cache.** `job-boards` hands discovered postings to the UI via
+  `app/storage.py` (S3 in prod, local disk in dev) under one shared key, cleared at
+  each campaign start — works across separate ECS tasks now, but two campaigns running
+  concurrently (multiple users) would still clobber each other's "Approve a job" list.
+  Scoping the cache per-thread is a planned improvement.
