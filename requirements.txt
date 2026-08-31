@@ -12,7 +12,7 @@ langchain-postgres>=0.0.12
 langgraph-checkpoint-postgres>=2.0
 psycopg[binary,pool]>=3.1
 langchain-openai>=1.0
-# langchain-aws>=0.2       # uncomment if EMBEDDING_MODEL=bedrock:... (see app/rag/vectorstore.py)
+langchain-aws>=0.2        # Bedrock path: MODEL=bedrock_converse:... / EMBEDDING_MODEL=bedrock:...
 langsmith
 mcp
 python-jobspy
