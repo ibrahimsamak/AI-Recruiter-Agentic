@@ -1,7 +1,6 @@
 plan
 .env
 ROADMAP.md
-app/rag/chroma/
 
 # Python
 __pycache__/
