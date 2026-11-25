@@ -5,17 +5,13 @@ from app.config import CHROMA_DIR, EMBEDDING_MODEL
 
 
 def get_vectorstore(collection: str = "jobs") -> Chroma:
-    return Chroma(
-        collection_name=collection,
-        embedding_function=OpenAIEmbeddings(model=EMBEDDING_MODEL),
-        persist_directory=CHROMA_DIR,
-    )
-
+   db = Chroma(collection_name=collection, embedding_function=OpenAIEmbeddings(model=EMBEDDING_MODEL),persist_directory=CHROMA_DIR)
+   return db
 
 def index_jobs(jobs: list[dict]) -> None:
     if not jobs:
         return
-    vs = get_vectorstore("jobs")
+    vs = get_vectorstore()
     vs.add_texts(
         texts=[j["description"] for j in jobs],
         metadatas=[
@@ -27,5 +23,5 @@ def index_jobs(jobs: list[dict]) -> None:
 
 
 def match_jobs(profile_text: str, k: int = 10):
-    vs = get_vectorstore("jobs")
-    return vs.similarity_search_with_relevance_scores(profile_text, k=k)
+    db = get_vectorstore()
+    return db.similarity_search_with_score(query=profile_text, k=k)
