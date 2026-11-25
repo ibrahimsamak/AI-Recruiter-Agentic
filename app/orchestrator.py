@@ -32,6 +32,11 @@ def build_orchestrator(mcp_tools: list, checkpointer=None):
         "tools": [check_grounding],
     }
 
+    # create_deep_agent (deepagents) builds a LangGraph agent with built-ins we rely on:
+    # - virtual filesystem (write_file/read_file/ls) -> drafts saved in state["files"]
+    # - task tool to delegate to the subagents below (each runs in its own context)
+    # - todo planning + auto-summarization for long multi-step campaigns
+    # so we only supply the model, tools, subagents and prompt, not the agent loop.
     return create_deep_agent(
         model=DEFAULT_MODEL,
         tools=[extract_profile, *safe_tools],

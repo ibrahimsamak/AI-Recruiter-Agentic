@@ -60,6 +60,7 @@ def _content_to_text(content) -> str:
 
 
 _agent = None
+# To avoid race condition. agent is build once
 _agent_lock = asyncio.Lock()
 
 
@@ -119,11 +120,8 @@ async def _stream_reply(content: str, thread_id: str):
     agent = await get_agent()
     steps: list[str] = []
     final_text = ""
-    async for update in agent.astream(
-        {"messages": [{"role": "user", "content": content}]},
-        config={"configurable": {"thread_id": thread_id}},
-        stream_mode="updates",
-    ):
+    agent_result = agent.astream({"messages": [{"role": "user", "content": content}]}, config={"configurable": {"thread_id": thread_id}}, stream_mode="updates")
+    async for update in agent_result: 
         maybe_final = _summarize(update, steps)
         if maybe_final:
             final_text = maybe_final
@@ -146,6 +144,7 @@ async def start_campaign(resume_file, location):
         JOBS_CACHE.unlink()
     except Exception:
         pass
+    
     seed = (
         f"Candidate resume:\n{resume_text}\n\n"
         f"Find, rank, and tailor for jobs in {location}. Do not submit anything."
